@@ -76,7 +76,7 @@
         return true;
       } catch (e) { return false; }
     },
-    carregar(nome) {
+    carregar(nome, tipo) {
       if (!this.cache[nome]) {
         this.cache[nome] = new Promise((ok, falha) => {
           this.esperando[nome] = ok;
@@ -85,7 +85,7 @@
           s.onload = () => s.remove();
           s.onerror = () => { s.remove(); delete this.cache[nome]; falha(new Error('falhou ' + nome)); };
           document.head.appendChild(s);
-        }).then(async (b64) => URL.createObjectURL(new Blob([await this.abrir(b64)], { type: 'image/jpeg' })));
+        }).then(async (b64) => URL.createObjectURL(new Blob([await this.abrir(b64)], { type: tipo || 'image/jpeg' })));
       }
       return this.cache[nome];
     }
@@ -119,33 +119,53 @@
   };
 
   /* ------------------------------------------------------------ música */
+  // meio segundo de silêncio: destrava o áudio no toque do selo caso a trilha ainda esteja sendo aberta
+  const SILENCIO = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjYwLjE2LjEwMAAAAAAAAAAAAAAA//NwwAAAAAAAAAAAAEluZm8AAAAPAAAAGQAAA0MAPz8/SEhISFBQUFBXV1dXX19fX2dnZ2dvb29vd3d3d39/f3+IiIiIkJCQkJiYmJigoKCgqKioqK+vr6+3t7e3v7+/v8jIyMjQ0NDQ2NjY2ODg4ODo6Ojo8PDw8Pj4+Pj/////AAAAAExhdmM2MC4zMQAAAAAAAAAAAAAAACQCUgAAAAAAAAND4Ab03QAAAAAAAAAAAAAAAAD/8xDEAAAAA0gAAAAATEFNRTMuMTBMQU1FM//zEsQNAAADSAAAAAAuMTAwVVVVVUxBTUUzLv/zEMQbAAADSAAAAAAxMDBVVVVVTEFNRTMu//MQxCgAAANIAAAAADEwMFVVVVVMQU1FMy7/8xDENQAAA0gAAAAAMTAwVVVVVUxBTUUzLv/zEMRCAAADSAAAAAAxMDBVVVVVTEFNRTMu//MQxE8AAANIAAAAADEwMFVVVVVVVVVVVVX/8xDEXAAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMRpAAADSAAAAABVVVVVVVVVVVVVVVVV//MSxHYAAANIAAAAAFVVVVVVVVVVVVVVVVVV//MQxIQAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDEkQAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMSeAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxKsAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDEuAAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTFAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxNIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xLE3wAAA0gAAAAAVVVVVVVVVVVVVVVVVVX/8xDE7QAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVQ==';
   const Musica = {
-    el: null, btn: $('#musica'), voltar: false,
-    preparar(src) {
+    el: null, btn: $('#musica'), voltar: false, pronta: false, querTocar: false,
+    preparar(d) {
       if (this.el) return;
-      this.el = new Audio(src);
-      this.el.loop = true;
+      const reserva = d.musica || 'assets/audio/valsa-para-mariana.mp3';
+      this.el = new Audio();
       this.el.preload = 'auto';
       this.el.addEventListener('play', () => this.marcar(true));
       this.el.addEventListener('pause', () => this.marcar(false));
       this.btn.addEventListener('click', () => this.alternar());
       document.addEventListener('visibilitychange', () => {
-        if (!this.el) return;
+        if (!this.el || !this.pronta) return;
         if (document.hidden) {
           if (!this.el.paused) { this.voltar = true; this.el.pause(); }
         } else if (this.voltar) {
           this.voltar = false; this.tocar();
         }
       });
+      if (d.musicaCofre) Cofre.carregar(d.musicaCofre, 'audio/mpeg').then((u) => this.definir(u), () => this.definir(reserva));
+      else this.definir(reserva);
+    },
+    definir(url) {
+      this.el.loop = true;
+      this.el.src = url;
+      this.pronta = true;
+      if (this.querTocar) this.tocar();
     },
     tocar() {
       if (!this.el) return;
       try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* opcional */ }
+      if (!this.pronta) {
+        this.querTocar = true;
+        this.el.loop = false;
+        this.el.src = SILENCIO;
+        const s = this.el.play();
+        if (s && s.catch) s.catch(() => {});
+        return;
+      }
+      this.querTocar = false;
       const p = this.el.play();
       if (p && p.catch) p.catch(() => this.marcar(false));
     },
     alternar() {
       this.voltar = false;
+      if (!this.pronta) { this.querTocar = !this.querTocar; return; }
       if (this.el.paused) this.tocar(); else this.el.pause();
     },
     marcar(on) {
@@ -154,6 +174,7 @@
       this.btn.setAttribute('aria-label', on ? 'Pausar a música' : 'Tocar a música');
     }
   };
+  window.__musica = () => (Musica.el ? { src: Musica.el.src.slice(0, 5), tocando: !Musica.el.paused, t: Musica.el.currentTime } : null);
 
   /* ------------------------------------------------------------ céu de fundo */
   const Fundo = (() => {
@@ -949,7 +970,7 @@
       const d = Cofre.dados;
       if (document.activeElement) document.activeElement.blur();
       montar(d);
-      Musica.preparar(d.musica || 'assets/audio/valsa-para-mariana.mp3');
+      Musica.preparar(d);
       form.classList.add('sumindo');
       setTimeout(() => { form.hidden = true; }, 500);
       const bv = $('#boasvindas');
